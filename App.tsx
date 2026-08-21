@@ -396,9 +396,15 @@ const App: React.FC = () => {
               </button>
               
               <div className="flex items-center gap-2">
-                <div className="w-9 h-9 bg-gradient-to-br from-purple-100 to-purple-200 rounded-full border border-purple-300 flex items-center justify-center shadow-inner">
-                   <User className="w-5 h-5 text-purple-600" />
-                </div>
+                <button
+                  onClick={() => setIsUserModalOpen(true)}
+                  className="flex items-center gap-2 p-0.5 rounded-full hover:ring-2 hover:ring-purple-300 transition-all cursor-pointer"
+                  title="Master Control / System Settings"
+                >
+                  <div className="w-9 h-9 bg-gradient-to-br from-purple-100 to-purple-200 rounded-full border border-purple-300 flex items-center justify-center shadow-inner">
+                     <User className="w-5 h-5 text-purple-600" />
+                  </div>
+                </button>
               </div>
            </div>
         </header>

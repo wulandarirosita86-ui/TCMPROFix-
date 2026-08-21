@@ -1,30 +1,23 @@
-
-// Fix: Update model to gemini-3-flash-preview for better image analysis and compliance with latest guidelines.
-
 import { GoogleGenAI } from "@google/genai";
 import { ApiKeyEntry } from '../types';
+import { getResolvedGeminiKeys } from './geminiService';
+
+const CANDIDATE_MODELS = ['gemini-3.7-flash', 'gemini-3-flash-preview', 'gemini-2.0-flash', 'gemini-1.5-flash'];
 
 export async function analyzeTongueImage(
   base64Image: string, 
   apiKeys?: ApiKeyEntry[],
   onKeyExhausted?: (key: string) => void
 ): Promise<{ text: string }> {
-  const availableKeys = (apiKeys || []).filter(k => !k.isExhausted && k.key.trim() !== "");
+  const allResolved = getResolvedGeminiKeys(apiKeys);
   
-  if (availableKeys.length === 0) {
-    const envKey = process.env.GEMINI_API_KEY;
-    if (envKey) {
-      availableKeys.push({ key: envKey, isExhausted: false });
-    }
+  if (allResolved.length === 0) {
+    throw new Error("Tidak ada API Key Gemini yang ditemukan. Silakan tambahkan API Key di menu Settings untuk memulai analisis lidah.");
   }
 
+  let availableKeys = allResolved.filter(k => !k.isExhausted && k.key.trim() !== "");
   if (availableKeys.length === 0) {
-    const hasKeys = (apiKeys || []).length > 0;
-    if (hasKeys) {
-      throw new Error("Semua API Key Gemini Anda telah mencapai batas kuota (Exhausted). Silakan reset status kunci di menu Settings atau tambahkan kunci baru.");
-    } else {
-      throw new Error("Tidak ada API Key Gemini yang ditemukan. Silakan tambahkan API Key di menu Settings untuk memulai analisis lidah.");
-    }
+    availableKeys = allResolved.map(k => ({ ...k, isExhausted: false }));
   }
 
   const [mimeTypePrefix, base64Data] = base64Image.split(';base64,');
@@ -46,43 +39,53 @@ export async function analyzeTongueImage(
   `;
 
   let lastError: any = null;
-  const maxRetries = Math.min(availableKeys.length, 3);
+  const maxKeyRetries = Math.min(availableKeys.length, 5);
 
-  for (let i = 0; i < maxRetries; i++) {
-    const apiKey = availableKeys[i].key;
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: {
-          parts: [
-            { text: prompt },
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: base64Data
+  for (let kIdx = 0; kIdx < maxKeyRetries; kIdx++) {
+    const apiKey = availableKeys[kIdx].key;
+    
+    for (const modelName of CANDIDATE_MODELS) {
+      try {
+        const ai = new GoogleGenAI({ apiKey });
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: {
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: base64Data
+                }
               }
-            }
-          ]
-        },
-        config: {
-          maxOutputTokens: 1024,
-          temperature: 0.1,
-        }
-      });
+            ]
+          },
+          config: {
+            maxOutputTokens: 1024,
+            temperature: 0.1,
+          }
+        });
 
-      return {
-        text: response.text || "Maaf, tidak dapat menganalisis gambar ini."
-      };
-    } catch (error: any) {
-      console.error(`Tongue Analysis Error with key ${apiKey.substring(0, 8)}...:`, error);
-      lastError = error;
-      const errMsg = error.message?.toLowerCase() || "";
-      if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("403") || errMsg.includes("limit")) {
-        if (onKeyExhausted) onKeyExhausted(apiKey);
-        continue;
-      } else {
-        throw error;
+        return {
+          text: response.text || "Maaf, tidak dapat menganalisis gambar ini."
+        };
+      } catch (error: any) {
+        console.error(`Tongue Analysis Error with key ${apiKey.substring(0, 8)}... on model ${modelName}:`, error);
+        lastError = error;
+        const errMsg = error.message?.toLowerCase() || "";
+        
+        if (errMsg.includes("not found") || errMsg.includes("no longer available") || errMsg.includes("404")) {
+          continue; // Try next model
+        }
+
+        if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("403") || errMsg.includes("limit")) {
+          if (onKeyExhausted) onKeyExhausted(apiKey);
+          break; // Try next key
+        } else if (errMsg.includes("api key not found") || errMsg.includes("invalid api key")) {
+          break; // Try next key
+        } else {
+          throw error;
+        }
       }
     }
   }

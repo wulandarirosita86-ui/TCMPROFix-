@@ -1,11 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, UserPlus, Trash2, Shield, User, AlertCircle, Save, Settings, Database, Key, MapPin, Phone, Zap } from 'lucide-react';
+import { X, UserPlus, Trash2, Shield, User, AlertCircle, Save, Settings, Database, Key, MapPin, Phone, Zap, Eye, EyeOff, CheckCircle2, Loader2 } from 'lucide-react';
 import { UserAccount, AppSettings, ApiKeyEntry } from '../types';
 import { db } from '../services/db';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { db as firestore, auth } from '../firebase';
 import { updatePassword } from 'firebase/auth';
+import { GoogleGenAI } from '@google/genai';
 
 interface Props {
   isOpen: boolean;
@@ -14,7 +15,7 @@ interface Props {
 }
 
 const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'users' | 'settings' | 'profile'>('users');
+  const [activeTab, setActiveTab] = useState<'settings' | 'users' | 'profile'>('settings');
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -28,6 +29,9 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
   const [clinicName, setClinicName] = useState('');
   const [clinicAddress, setClinicAddress] = useState('');
   const [clinicPhone, setClinicPhone] = useState('');
+  const [visibleKeys, setVisibleKeys] = useState<Record<number, boolean>>({});
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Change Password state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -40,12 +44,23 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
       const fetchData = async () => {
         try {
           const s = await db.settings.get();
+          const localDirectKey = localStorage.getItem('gemini_api_key') || localStorage.getItem('tcm_gemini_api_key') || '';
           if (s) {
-            setGeminiKey(s.geminiApiKey || '');
-            setGeminiKeys(s.geminiApiKeys || []);
+            const singleK = (s.geminiApiKey || localDirectKey || '').trim();
+            setGeminiKey(singleK);
+            let keys = (s.geminiApiKeys || []).map(k => ({ ...k, key: (k.key || '').trim() }));
+            if (keys.length === 0 && singleK) {
+              keys = [{ key: singleK, isExhausted: false }];
+            }
+            if (keys.length === 0) {
+              keys = [{ key: '', isExhausted: false }];
+            }
+            setGeminiKeys(keys);
             setClinicName(s.clinicName || '');
             setClinicAddress(s.clinicAddress || '');
             setClinicPhone(s.clinicPhone || '');
+          } else {
+            setGeminiKeys([{ key: localDirectKey, isExhausted: false }]);
           }
         } catch (e) {
           console.warn("Fetch settings skipped:", e);
@@ -106,12 +121,23 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
     setError('');
     setSuccessMsg('');
     
-    // Clean up empty keys
-    const cleanedKeys = geminiKeys.filter(k => k.key.trim() !== "");
+    // Clean up and trim empty keys
+    const cleanedKeys = geminiKeys
+      .map(k => ({ ...k, key: k.key.trim() }))
+      .filter(k => k.key !== "");
+    
+    const primaryKey = cleanedKeys.length > 0 ? cleanedKeys[0].key : geminiKey.trim();
+    if (primaryKey) {
+      try {
+        localStorage.setItem('gemini_api_key', primaryKey);
+        localStorage.setItem('tcm_gemini_api_key', primaryKey);
+      } catch (e) {}
+    }
+
     console.log('Saving settings with keys:', cleanedKeys);
 
     const result = await db.settings.update({
-      geminiApiKey: geminiKey,
+      geminiApiKey: primaryKey,
       geminiApiKeys: cleanedKeys,
       clinicName,
       clinicAddress,
@@ -121,8 +147,7 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
     if (result.success) {
       if (result.error) {
         setSuccessMsg(`Settings saved locally! (Note: ${result.error})`);
-        // Longer timeout if there's a warning so they can read it
-        setTimeout(() => window.location.reload(), 3000);
+        setTimeout(() => window.location.reload(), 2000);
       } else {
         setSuccessMsg("Settings saved successfully.");
         setTimeout(() => window.location.reload(), 1000);
@@ -155,6 +180,44 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
     const newKeys = [...geminiKeys];
     newKeys[index].isExhausted = !newKeys[index].isExhausted;
     setGeminiKeys(newKeys);
+  };
+
+  const toggleKeyVisibility = (index: number) => {
+    setVisibleKeys(prev => ({ ...prev, [index]: !prev[index] }));
+  };
+
+  const handleTestApiKey = async (keyToTest?: string) => {
+    const key = keyToTest || (geminiKeys.find(k => k.key.trim())?.key) || geminiKey.trim();
+    if (!key) {
+      setTestResult({ success: false, message: "Masukkan API Key terlebih dahulu." });
+      return;
+    }
+
+    setIsTestingKey(true);
+    setTestResult(null);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: key });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.7-flash',
+        contents: 'ping',
+        config: {
+          maxOutputTokens: 5,
+        }
+      });
+
+      if (response && response.text !== undefined) {
+        setTestResult({ success: true, message: "Koneksi Gemini API Berhasil! Kunci Valid & Siap Digunakan." });
+      } else {
+        setTestResult({ success: true, message: "Koneksi Gemini API Berhasil!" });
+      }
+    } catch (err: any) {
+      console.error("Test API Key Error:", err);
+      const msg = err.message || "Gagal terkoneksi ke Gemini API.";
+      setTestResult({ success: false, message: `Error: ${msg}` });
+    } finally {
+      setIsTestingKey(false);
+    }
   };
 
   const resetAllKeys = async () => {
@@ -438,10 +501,34 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
              </>
            ) : activeTab === 'settings' ? (
              <div className="space-y-6">
+                {/* Connection Test Banner */}
+                {testResult && (
+                  <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 text-xs font-bold ${testResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
+                    <div className="flex items-center gap-2">
+                      {testResult.success ? <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" /> : <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />}
+                      <span>{testResult.message}</span>
+                    </div>
+                    <button onClick={() => setTestResult(null)} className="text-slate-400 hover:text-slate-600 p-1">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
                  <div className="bg-purple-50 p-6 rounded-2xl border border-purple-100 space-y-4">
-                  <h3 className="text-sm font-black text-tcm-primary uppercase tracking-wider flex items-center gap-2">
-                    <Key className="w-4 h-4" /> Gemini AI Configuration (Multi-Key Rotation)
-                  </h3>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h3 className="text-sm font-black text-tcm-primary uppercase tracking-wider flex items-center gap-2">
+                      <Key className="w-4 h-4" /> Gemini AI Configuration (Multi-Key Rotation)
+                    </h3>
+                    <button
+                      type="button"
+                      disabled={isTestingKey}
+                      onClick={() => handleTestApiKey()}
+                      className="px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-800 text-xs font-bold rounded-xl border border-purple-300 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {isTestingKey ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-amber-500" />}
+                      {isTestingKey ? 'Testing Connection...' : 'Test Connection'}
+                    </button>
+                  </div>
                   
                   <div className="space-y-3">
                     <div className="flex justify-between items-center mb-2">
@@ -470,22 +557,32 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
                       </div>
                     )}
 
-                    <div className="space-y-3">
+                     <div className="space-y-3">
                       {geminiKeys.map((keyEntry, idx) => (
                         <div key={idx} className="flex gap-2 items-center animate-fade-in">
                           <div className="flex-1 relative">
                             <input 
-                              type="password" 
+                              type={visibleKeys[idx] ? "text" : "password"} 
                               value={keyEntry.key}
                               onChange={e => updateKeyField(idx, e.target.value)}
-                              className={`w-full bg-white border ${keyEntry.isExhausted ? 'border-rose-200 bg-rose-50/30' : 'border-purple-200'} rounded-xl px-4 py-3 text-sm text-purple-900 focus:border-tcm-primary outline-none shadow-sm transition-all font-mono`}
-                              placeholder={`API Key #${idx + 1}`}
+                              className={`w-full bg-white border ${keyEntry.isExhausted ? 'border-rose-200 bg-rose-50/30' : 'border-purple-200'} rounded-xl px-4 py-3 pr-20 text-sm text-purple-900 focus:border-tcm-primary outline-none shadow-sm transition-all font-mono`}
+                              placeholder={`API Key #${idx + 1} (AIzaSy...)`}
                             />
-                            {keyEntry.isExhausted && (
-                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[8px] font-black text-rose-500 uppercase tracking-widest bg-rose-100 px-1.5 py-0.5 rounded">
-                                Exhausted
-                              </span>
-                            )}
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                              {keyEntry.isExhausted && (
+                                <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest bg-rose-100 px-1.5 py-0.5 rounded mr-1">
+                                  Exhausted
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => toggleKeyVisibility(idx)}
+                                className="text-purple-400 hover:text-purple-700 p-1"
+                                title={visibleKeys[idx] ? "Sembunyikan Kunci" : "Tampilkan Kunci"}
+                              >
+                                {visibleKeys[idx] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              </button>
+                            </div>
                           </div>
                           <button 
                             onClick={() => toggleKeyExhausted(idx)}
