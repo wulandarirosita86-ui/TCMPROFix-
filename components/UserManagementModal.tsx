@@ -7,6 +7,7 @@ import { collection, query, onSnapshot } from 'firebase/firestore';
 import { db as firestore, auth } from '../firebase';
 import { updatePassword } from 'firebase/auth';
 import { GoogleGenAI } from '@google/genai';
+import { CANDIDATE_MODELS } from '../services/geminiService';
 
 interface Props {
   isOpen: boolean;
@@ -196,28 +197,46 @@ const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, currentUser }) 
     setIsTestingKey(true);
     setTestResult(null);
 
-    try {
-      const ai = new GoogleGenAI({ apiKey: key });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: 'ping',
-        config: {
-          maxOutputTokens: 5,
-        }
-      });
+    let connectedModel = "";
+    let lastErr: any = null;
 
-      if (response && response.text !== undefined) {
-        setTestResult({ success: true, message: "Koneksi Gemini API Berhasil! Kunci Valid & Siap Digunakan." });
-      } else {
-        setTestResult({ success: true, message: "Koneksi Gemini API Berhasil!" });
+    for (const model of CANDIDATE_MODELS) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: key });
+        const response = await ai.models.generateContent({
+          model: model,
+          contents: 'ping',
+          config: {
+            maxOutputTokens: 5,
+          }
+        });
+
+        if (response && response.text !== undefined) {
+          connectedModel = model;
+          break;
+        }
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`Test key with ${model} failed, trying fallback:`, err);
       }
-    } catch (err: any) {
-      console.error("Test API Key Error:", err);
-      const msg = err.message || "Gagal terkoneksi ke Gemini API.";
-      setTestResult({ success: false, message: `Error: ${msg}` });
-    } finally {
-      setIsTestingKey(false);
     }
+
+    if (connectedModel) {
+      setTestResult({ 
+        success: true, 
+        message: `Koneksi Gemini API Berhasil! Kunci Valid & Aktif (Model: ${connectedModel}).` 
+      });
+    } else {
+      let errMsg = lastErr?.message || "Gagal terkoneksi ke Gemini API.";
+      try {
+        if (typeof errMsg === 'string' && errMsg.startsWith('{')) {
+          const parsed = JSON.parse(errMsg);
+          if (parsed?.error?.message) errMsg = parsed.error.message;
+        }
+      } catch (e) {}
+      setTestResult({ success: false, message: `Error: ${errMsg}` });
+    }
+    setIsTestingKey(false);
   };
 
   const resetAllKeys = async () => {

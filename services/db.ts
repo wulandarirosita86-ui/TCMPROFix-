@@ -151,8 +151,6 @@ export const db = {
   },
   patients: {
     getAll: async (): Promise<SavedPatient[]> => {
-      const uid = auth.currentUser?.uid || 'local-guest';
-      
       // 1. Try Supabase First
       if (supabase) {
         try {
@@ -162,7 +160,7 @@ export const db = {
             
           if (!error && data) {
             return data as SavedPatient[];
-          } else {
+          } else if (error) {
             console.error('Supabase Error (patients.getAll):', error);
           }
         } catch (err) {
@@ -170,22 +168,25 @@ export const db = {
         }
       }
 
-      // 2. Fallback to Firebase
-      try {
-        const q = query(collection(firestore, 'patients'), where('authorUid', '==', uid));
-        const querySnapshot = await getDocs(q);
-        const patients: SavedPatient[] = [];
-        querySnapshot.forEach((doc) => {
-          patients.push(doc.data() as SavedPatient);
-        });
-        return patients;
-      } catch (e) {
-        console.error('Firebase Error (patients.getAll):', e);
-        
-        // 3. Fallback to local storage if both fail
-        const localData = localStorage.getItem('tcm_patients_local');
-        return localData ? JSON.parse(localData) : [];
+      // 2. Try Firebase (only when user is authenticated)
+      if (auth.currentUser) {
+        try {
+          const uid = auth.currentUser.uid;
+          const q = query(collection(firestore, 'patients'), where('authorUid', '==', uid));
+          const querySnapshot = await getDocs(q);
+          const patients: SavedPatient[] = [];
+          querySnapshot.forEach((doc) => {
+            patients.push(doc.data() as SavedPatient);
+          });
+          return patients;
+        } catch (e) {
+          console.error('Firebase Error (patients.getAll):', e);
+        }
       }
+
+      // 3. Fallback to local storage
+      const localData = localStorage.getItem('tcm_patients_local');
+      return localData ? JSON.parse(localData) : [];
     },
     add: async (patient: SavedPatient) => {
       const uid = auth.currentUser?.uid || 'local-guest';
@@ -194,8 +195,6 @@ export const db = {
       // 1. Try Supabase
       if (supabase) {
         try {
-          // Flatten objects to make sure they can be inserted if columns aren't strict JSONs, 
-          // but assuming Supabase column is JSONB, it will handle it natively.
           const { error } = await supabase
             .from('patients')
             .upsert(patientWithAuth);
@@ -208,11 +207,13 @@ export const db = {
         }
       }
 
-      // 2. Try Firebase
-      try {
-        await setDoc(doc(firestore, 'patients', patient.id), patientWithAuth);
-      } catch (e) {
-        console.error('Firebase Error (patients.add):', e);
+      // 2. Try Firebase (only when user is authenticated)
+      if (auth.currentUser) {
+        try {
+          await setDoc(doc(firestore, 'patients', patient.id), patientWithAuth);
+        } catch (e) {
+          console.error('Firebase Error (patients.add):', e);
+        }
       }
       
       // 3. Always save locally as a reliable offline cache
@@ -239,11 +240,13 @@ export const db = {
         }
       }
 
-      // 2. Try Firebase
-      try {
-        await deleteDoc(doc(firestore, 'patients', id));
-      } catch (e) {
-        console.error('Firebase Error (patients.delete):', e);
+      // 2. Try Firebase (only when user is authenticated)
+      if (auth.currentUser) {
+        try {
+          await deleteDoc(doc(firestore, 'patients', id));
+        } catch (e) {
+          console.error('Firebase Error (patients.delete):', e);
+        }
       }
       
       // 3. Also delete locally

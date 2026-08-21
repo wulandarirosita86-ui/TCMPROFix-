@@ -232,12 +232,24 @@ const App: React.FC = () => {
       let code: 'API_FULL' | 'TIMEOUT' | 'NETWORK_ERROR' | 'UNKNOWN' = 'UNKNOWN';
       
       if (error.message) {
-        const msgLower = error.message.toLowerCase();
+        let rawMessage = error.message;
+        try {
+          if (typeof rawMessage === 'string' && rawMessage.startsWith('{')) {
+            const parsed = JSON.parse(rawMessage);
+            if (parsed?.error?.message) rawMessage = parsed.error.message;
+          }
+        } catch (e) {}
+
+        const msgLower = rawMessage.toLowerCase();
         if (msgLower.includes("429") || msgLower.includes("quota")) {
           code = 'API_FULL';
           errorMsg = appLanguage === Language.ENGLISH 
             ? "API Quota Full / Too many requests. Please wait a minute and try again." 
             : "Kuota AI Penuh / Terlalu banyak permintaan. Silakan tunggu 1-2 menit dan coba lagi.";
+        } else if (msgLower.includes("503") || msgLower.includes("high demand") || msgLower.includes("unavailable") || msgLower.includes("overloaded")) {
+          errorMsg = appLanguage === Language.ENGLISH
+            ? "The AI model is experiencing a temporary surge in demand. Please click Retry in a few seconds."
+            : "Server AI sedang mengalami lonjakan beban sesaat. Silakan klik Coba Lagi dalam beberapa detik.";
         } else if (msgLower.includes("timeout") || msgLower.includes("aborted")) {
           code = 'TIMEOUT';
           errorMsg = appLanguage === Language.ENGLISH
@@ -249,7 +261,7 @@ const App: React.FC = () => {
             ? "Network Error. Please check your internet connection."
             : "Kesalahan Jaringan. Periksa koneksi internet Anda.";
         } else {
-          errorMsg = error.message;
+          errorMsg = rawMessage;
         }
       }
       

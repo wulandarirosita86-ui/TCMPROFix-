@@ -81,7 +81,17 @@ export const getResolvedGeminiKeys = (apiKeys?: ApiKeyEntry[]): ApiKeyEntry[] =>
   return Array.from(keyMap.entries()).map(([key, isExhausted]) => ({ key, isExhausted }));
 };
 
-const CANDIDATE_MODELS = ['gemini-3.7-flash', 'gemini-3-flash-preview', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+// Resilient priority order: fast, stable production models first, with fallbacks
+export const CANDIDATE_MODELS = [
+  'gemini-3.6-flash',
+  'gemini-2.5-flash',
+  'gemini-3.7-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-3-flash-preview',
+  'gemini-flash-latest'
+];
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const sendMessageToGeminiStream = async (
   message: string,
@@ -97,7 +107,7 @@ export const sendMessageToGeminiStream = async (
   const allResolved = getResolvedGeminiKeys(apiKeys);
   
   if (allResolved.length === 0) {
-    throw new Error("Tidak ada API Key Gemini yang ditemukan. Silakan tambahkan API Key di menu Settings / Admin.");
+    throw new Error("Tidak ada API Key Gemini yang ditemukan. Silakan tambahkan API Key di menu Settings / Master Control.");
   }
 
   // Filter available non-exhausted keys; if all are exhausted, reset them so user can retry
@@ -278,26 +288,89 @@ export const sendMessageToGeminiStream = async (
         console.error(`Gemini Error with key ${apiKey.substring(0, 8)}... on model ${modelName}:`, error);
         lastError = error;
 
-        const errMsg = error.message?.toLowerCase() || "";
+        const errMsg = (error.message || "").toLowerCase();
+        const errString = JSON.stringify(error).toLowerCase();
+
+        // 1. High demand / 503 / 500 / Overloaded / Temporary Server Spike -> Fallback to next model immediately!
+        if (
+          errMsg.includes("503") || 
+          errMsg.includes("high demand") || 
+          errMsg.includes("unavailable") || 
+          errMsg.includes("overloaded") || 
+          errMsg.includes("500") || 
+          errMsg.includes("internal") ||
+          errString.includes("503") ||
+          errString.includes("unavailable")
+        ) {
+          console.warn(`Model ${modelName} is experiencing high demand (503). Retrying with next fallback model...`);
+          continue; // Try next candidate model!
+        }
         
-        // If model not found or deprecated, try next candidate model
-        if (errMsg.includes("not found") || errMsg.includes("no longer available") || errMsg.includes("404")) {
+        // 2. If model not found or deprecated, try next candidate model
+        if (
+          errMsg.includes("not found") || 
+          errMsg.includes("no longer available") || 
+          errMsg.includes("404") ||
+          errString.includes("404")
+        ) {
           console.warn(`Model ${modelName} not available, trying next fallback model...`);
+          continue; // Try next candidate model!
+        }
+
+        // 3. Quota / Rate limit (429) -> Try next model first, if all fail will exhaust key
+        if (
+          errMsg.includes("429") || 
+          errMsg.includes("quota") || 
+          errMsg.includes("limit") ||
+          errString.includes("429") ||
+          errString.includes("resource_exhausted")
+        ) {
+          console.warn(`Model ${modelName} hit rate limit/quota, trying next model or key...`);
+          // Continue to next model in case quota is model-specific, otherwise key will move on
           continue;
         }
 
-        // If quota / rate limit exceeded, exhaust key and try next key
-        if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("403")) {
-          if (onKeyExhausted) onKeyExhausted(apiKey);
+        // 4. Invalid key / Auth failure -> Move to next API key
+        if (
+          errMsg.includes("api key not found") || 
+          errMsg.includes("invalid api key") || 
+          errMsg.includes("api_key_invalid") ||
+          errMsg.includes("unauthenticated")
+        ) {
           break; // break model loop, go to next key
-        } else if (errMsg.includes("api key not found") || errMsg.includes("invalid api key")) {
-          break; // break model loop, go to next key
-        } else {
-          throw error; 
         }
+
+        // 5. For any other temporary error, try next candidate model first before failing
+        console.warn(`Encountered error on model ${modelName}. Attempting next model...`);
+        continue;
+      }
+    }
+
+    // If all models failed for this key, mark key exhausted if it seemed quota related
+    const lastMsg = (lastError?.message || "").toLowerCase();
+    if (lastMsg.includes("429") || lastMsg.includes("quota") || lastMsg.includes("limit")) {
+      if (onKeyExhausted) onKeyExhausted(apiKey);
+    }
+  }
+
+  // Parse clear error message if all keys and models failed
+  let finalErrorMessage = "Gagal memproses permintaan AI.";
+  if (lastError) {
+    if (lastError.message) {
+      try {
+        const parsedErr = typeof lastError.message === 'string' && lastError.message.startsWith('{') 
+          ? JSON.parse(lastError.message) 
+          : null;
+        if (parsedErr?.error?.message) {
+          finalErrorMessage = parsedErr.error.message;
+        } else {
+          finalErrorMessage = lastError.message;
+        }
+      } catch (e) {
+        finalErrorMessage = lastError.message;
       }
     }
   }
 
-  throw lastError || new Error("Semua API Key gagal digunakan.");
+  throw new Error(finalErrorMessage);
 };
