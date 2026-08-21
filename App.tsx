@@ -17,7 +17,6 @@ import PatientArchivePanel from './components/PatientArchivePanel';
 import SyndromeAtlasWindow from './components/SyndromeAtlasWindow';
 import AcupuncturePointsPanel from './components/AcupuncturePointsPanel';
 import WuXingEducationPage from './components/WuXingEducationPage';
-import ConsentModal from './components/ConsentModal';
 import PrivacyPolicyModal from './components/PrivacyPolicyModal';
 import PatientDashboard from './components/PatientDashboard';
 
@@ -136,15 +135,7 @@ const App: React.FC = () => {
   const [activePanel, setActivePanel] = useState<'chat' | 'diagnosis' | 'wuxing' | 'wuxing-education' | 'ukom' | 'patients' | 'atlas' | 'invoice' | 'bmi' | 'acupuncture'>('chat');
   const [appLanguage, setAppLanguage] = useState<Language>(Language.INDONESIAN);
   
-  const [showConsent, setShowConsent] = useState(true);
   const [showPrivacy, setShowPrivacy] = useState(false);
-
-  useEffect(() => {
-    const consentAccepted = localStorage.getItem('consent_accepted');
-    if (consentAccepted === 'true') {
-      setShowConsent(false);
-    }
-  }, []);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: 'welcome', role: 'model', text: 'Sistem Siap. Masukkan keluhan pasien untuk analisis cepat atau gunakan Form Input Pasien.', timestamp: new Date() }
@@ -607,19 +598,6 @@ const App: React.FC = () => {
             <span className="text-[10px] font-black uppercase tracking-tighter">Menu</span>
           </button>
         </div>
-
-        {showConsent && (
-          <ConsentModal 
-            isOpen={showConsent} 
-            onAccept={() => {
-              localStorage.setItem('consent_accepted', 'true');
-              setShowConsent(false);
-            }} 
-            onDecline={() => {
-              setShowConsent(false);
-            }} 
-          />
-        )}
 
         {showPrivacy && (
           <PrivacyPolicyModal 

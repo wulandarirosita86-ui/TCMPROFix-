@@ -9,3 +9,35 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Block & Hide Netlify ads, badges, banners, and promotional logos */
+a[href*="netlify.com"],
+a[href*="netlify.app"],
+img[src*="netlify"],
+img[alt*="netlify" i],
+img[alt*="Deploys by Netlify" i],
+#netlify-badge,
+.netlify-badge,
+.powered-by-netlify,
+[data-netlify-badge],
+div[id*="netlify" i],
+div[class*="netlify" i],
+iframe[src*="netlify" i],
+iframe[title*="netlify" i],
+[id^="__netlify"],
+[class^="__netlify"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  position: absolute !important;
+  left: -9999px !important;
+  top: -9999px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+}
+
