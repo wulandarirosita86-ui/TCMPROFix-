@@ -1,6 +1,6 @@
 {
   "name": "Remix FIX CINTA FITRI TCM PRO ",
-  "description": "A multilingual Traditional Chinese Medicine diagnosis assistant and content builder using Gemini 2.5 Flash. Supports Indonesian, English, Sundanese, Javanese, and Acehnese.",
+  "description": "A multilingual Traditional Chinese Medicine diagnosis assistant and content builder using Gemini 3.7 Flash. Supports Indonesian, English, Sundanese, Javanese, and Acehnese.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
